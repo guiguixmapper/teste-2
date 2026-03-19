@@ -125,11 +125,20 @@ CSS = """
   }
 
   /* ── Tabs ── */
+  /* Masquer la barre rouge animée de Streamlit */
+  [data-testid="stTabs"] [role="tablist"]::before,
+  [data-testid="stTabs"] [role="tablist"]::after { display: none !important; }
+  div[role="tablist"] > div[style*="position: absolute"] { display: none !important; }
+
   [data-testid="stTabs"] [data-testid="stTab"] {
-    font-size: 0.82rem !important; font-weight: 600 !important;
-    padding: 6px 14px !important; opacity: 0.55;
+    font-size: 0.84rem !important; font-weight: 600 !important;
+    padding: 6px 16px !important;
     background: transparent !important; border: none !important;
     border-bottom: 2px solid transparent !important; border-radius: 0 !important;
+    opacity: 0.75 !important;
+  }
+  [data-testid="stTabs"] [data-testid="stTab"]:hover {
+    opacity: 1 !important;
   }
   [data-testid="stTabs"] [aria-selected="true"] {
     opacity: 1 !important; color: #2563eb !important;
