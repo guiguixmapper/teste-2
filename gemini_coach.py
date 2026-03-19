@@ -1,8 +1,7 @@
 """
 gemini_coach.py
 ===============
-Module dédié à l'Intelligence Artificielle (Google Gemini).
-Génère le briefing ultime : Pacing, Nutrition (+rab), Chaleur, Crème solaire et Date !
+Module IA — génère un briefing cycliste complet via Google Gemini.
 """
 
 import google.generativeai as genai
@@ -10,120 +9,204 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def generer_briefing(api_key: str, dist_tot: float, d_plus: float, temps_s: float, calories: int,
-                     score: dict, ascensions: list, analyse_meteo: dict, resultats: list,
-                     heure_depart: str, heure_arrivee: str, vitesse_moyenne: float, 
-                     infos_soleil: dict, contexte_date: str) -> str | None:
-    """
-    Envoie les données du parcours à Gemini pour obtenir un briefing tactique et pratique.
-    """
+
+def generer_briefing(
+    api_key:         str,
+    dist_tot:        float,
+    d_plus:          float,
+    temps_s:         float,
+    calories:        int,
+    score:           dict,
+    ascensions:      list,
+    analyse_meteo:   dict,
+    resultats:       list,
+    heure_depart:    str,
+    heure_arrivee:   str,
+    vitesse_moyenne: float,
+    infos_soleil:    dict,
+    contexte_date:   str,
+    nb_points_eau:   int  = 0,
+    uv_pollen:       dict = None,
+) -> str | None:
     if not api_key:
         return None
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel("gemini-2.5-flash")
 
-        # ── PRÉPARATION DES DONNÉES ──
-        dist_km = round(dist_tot / 1000, 1)
+        dist_km  = round(dist_tot / 1000, 1)
         d_plus_m = int(d_plus)
-        duree_h = round(temps_s / 3600, 1)
+        duree_h  = round(temps_s / 3600, 2)
+        dh       = int(duree_h)
+        dm       = int((duree_h % 1) * 60)
 
-        # Soleil
-        lever_str = infos_soleil["lever"].strftime("%H:%M") if infos_soleil else "inconnue"
+        lever_str   = infos_soleil["lever"].strftime("%H:%M")   if infos_soleil else "inconnue"
         coucher_str = infos_soleil["coucher"].strftime("%H:%M") if infos_soleil else "inconnue"
 
         if ascensions:
             cols_str = "\n".join([
-                f"- {a.get('Nom', a['Catégorie'])} (Départ: Km {a['Départ (km)']}, Longueur: {a['Longueur']}, Pente: {a['Pente moy.']})" 
+                f"  • {a.get('Nom','—')} ({a['Catégorie']}) — "
+                f"Km {a['Départ (km)']}→{a['Sommet (km)']}, "
+                f"{a['Longueur']}, D+ {a['Dénivelé']}, "
+                f"pente moy. {a['Pente moy.']}, max {a['Pente max']}, "
+                f"sommet {a.get('Alt. sommet','?')}, "
+                f"arrivée sommet vers {a.get('Arrivée sommet','?')}"
                 for a in ascensions
             ])
         else:
-            cols_str = "Parcours roulant, aucune ascension majeure catégorisée."
+            cols_str = "  Aucune ascension catégorisée — parcours principalement roulant."
 
-        # Températures et Ressenti (Wind Chill)
         valides = [cp for cp in resultats if cp.get("temp_val") is not None]
         if valides:
             t_min = min(cp["temp_val"] for cp in valides)
             t_max = max(cp["temp_val"] for cp in valides)
-            temp_txt = f"Entre {t_min}°C et {t_max}°C."
-            
+            t_moy = round(sum(cp["temp_val"] for cp in valides) / len(valides), 1)
+            temp_txt = f"{t_min}°C min / {t_moy}°C moy / {t_max}°C max"
             ressentis = [cp["ressenti"] for cp in valides if cp.get("ressenti") is not None]
-            if ressentis:
-                r_min = min(ressentis)
-                r_max = max(ressentis)
-                ressenti_txt = f"Ressenti entre {r_min}°C et {r_max}°C avec le vent."
-            else:
-                ressenti_txt = "Similaire à la température réelle."
+            ressenti_txt = (f"Wind chill : {min(ressentis)}°C à {max(ressentis)}°C"
+                            if ressentis else "Pas de wind chill significatif")
         else:
-            temp_txt = "Inconnue."
-            ressenti_txt = "Inconnue."
+            t_min = t_max = t_moy = None
+            temp_txt = ressenti_txt = "Données indisponibles"
 
-        meteo_txt = "Données météo du vent non disponibles."
-        pluie_detail = "Pas de données sur la pluie."
-        
         if analyse_meteo:
-            meteo_txt = (
-                f"Face {analyse_meteo['pct_face']}%, "
-                f"Dos {analyse_meteo['pct_dos']}%, Côté {analyse_meteo['pct_cote']}%."
-            )
-            
-            if analyse_meteo.get('premier_pluie'):
-                cp = analyse_meteo['premier_pluie']
-                pluie_detail = f"OUI. Risque de {cp.get('pluie_pct')}% attendu vers {cp['Heure']}, exactement au kilomètre {cp['Km']}."
+            pct_face = analyse_meteo['pct_face']
+            pct_dos  = analyse_meteo['pct_dos']
+            pct_cote = analyse_meteo['pct_cote']
+            vent_txt = f"{pct_face}% face / {pct_dos}% dos / {pct_cote}% côté"
+            segs = analyse_meteo.get("segments_face", [])
+            if segs:
+                vent_txt += " — segments face : " + ", ".join(f"Km {s[0]}→{s[1]}" for s in segs)
+            if analyse_meteo.get("premier_pluie"):
+                cp_p = analyse_meteo["premier_pluie"]
+                pluie_txt = f"RISQUE à {cp_p['Heure']} (Km {cp_p['Km']}, {cp_p.get('pluie_pct','?')}%)"
             else:
-                pluie_detail = "NON. Aucun risque de pluie majeur (>50%) prévu."
+                pluie_txt = "Aucun risque >50% prévu"
+        else:
+            vent_txt = pluie_txt = "Indisponible"
 
-        # ── LE PROMPT (La consigne donnée à l'IA) ──
+        vents   = [cp.get("vent_val") for cp in valides if cp.get("vent_val") is not None]
+        vent_max = max(vents) if vents else 0
+
+        if uv_pollen:
+            uv_txt    = uv_pollen.get("uv_label", "Inconnu")
+            uv_max_val = uv_pollen.get("uv_max")
+            pollen_txt = ", ".join(uv_pollen.get("pollens", [])) or "Aucune alerte"
+        else:
+            uv_txt = pollen_txt = "Indisponible"
+            uv_max_val = None
+
+        eau_txt = (f"{nb_points_eau} point(s) d'eau sur le tracé (OSM)"
+                   if nb_points_eau > 0
+                   else "Aucun point d'eau identifié — prévoir toute l'autonomie")
+
+        if t_max is not None and t_max >= 25:
+            eau_h = 1.0; eau_conseil = "1 bidon/heure + électrolytes (chaleur)"
+        elif t_max is not None and t_max >= 15:
+            eau_h = 0.7; eau_conseil = "700 ml/heure"
+        else:
+            eau_h = 0.5; eau_conseil = "500 ml/heure"
+        eau_total = round(eau_h * duree_h, 1)
+
+        carbs_h = 70 if (d_plus_m > 1500 or duree_h > 4) else 60
+        carbs_total = int(carbs_h * duree_h)
+        nb_barres = round(carbs_total / 40)
+        nb_gels   = round(carbs_total / 25)
+
         prompt = f"""
-        Tu es un compagnon de route cycliste expérimenté, sympa et très motivant. Tu n'es PAS un coach pro ultra-strict, mais plutôt un super pote de club de vélo qui donne d'excellents conseils pratiques. Tu tutoies le cycliste.
+Tu es un directeur sportif cycliste expert. Tu tutoies le coureur.
+Sois précis, concret et chiffré. N'utilise que les données fournies.
+Ne répète jamais la même info dans deux sections différentes.
+Évite les formules creuses et les encouragements vagues.
 
-        Voici les données exactes de sa sortie :
-        - Date de la sortie : {contexte_date}
-        - Distance : {dist_km} km
-        - Dénivelé positif : {d_plus_m} m
-        - Heure de départ : {heure_depart}
-        - Heure d'arrivée estimée : {heure_arrivee}
-        - Vitesse moyenne globale estimée : {vitesse_moyenne} km/h
-        - Durée de pédalage : {duree_h} heures
-        - Dépense énergétique estimée : {calories} kcal
-        - Températures prévues : {temp_txt}
-        - Température ressentie (Wind Chill) : {ressenti_txt}
-        - Horaires du soleil : Lever à {lever_str}, Coucher à {coucher_str}
-        - Difficulté globale : {score['label']}
-        - Liste des ascensions :
-        {cols_str}
-        - Résumé du vent : {meteo_txt}
-        - Alerte Pluie précise : {pluie_detail}
+═══════════════════════════════════════════════
+DONNÉES DE LA SORTIE
+═══════════════════════════════════════════════
+Date         : {contexte_date}
+Distance     : {dist_km} km  |  D+ : {d_plus_m} m
+Durée est.   : {dh}h{dm:02d}  |  Départ : {heure_depart}  |  Arrivée : {heure_arrivee}
+Vitesse moy. : {vitesse_moyenne} km/h  |  Calories : {calories} kcal
+Score        : {score['label']} ({score['total']}/10)
 
-        Rédige un briefing clair, amical et structuré qui respecte STRICTEMENT ce plan :
+ASCENSIONS
+{cols_str}
 
-        **1. Le Programme du {contexte_date} 🗺️**
-        Fais un récapitulatif sympa du parcours (distance, D+, heures de départ/arrivée et vitesse moyenne). Adapte ton introduction selon si c'est aujourd'hui, demain ou un autre jour. En te basant sur le nom des ascensions, essaie de deviner la région ou le massif traversé pour donner un côté "local" (si tu ne trouves pas, ne dis rien).
+MÉTÉO
+Températures : {temp_txt}
+Ressenti     : {ressenti_txt}
+Vent         : {vent_txt}  (max {vent_max} km/h)
+Pluie        : {pluie_txt}
+UV           : {uv_txt}
+Pollen       : {pollen_txt}
+Lever/Coucher: {lever_str} / {coucher_str}
 
-        **2. Météo, Chaleur & Équipement 🌤️👕**
-        Fais un point global : 
-        - Pluie : Donne l'heure et le kilomètre exacts de la pluie s'il y a un risque. Sinon rassure-le.
-        - Alerte Forte Chaleur 🥵 : Si la température maximale dépasse 30°C, tire la sonnette d'alarme ! Dis-lui de s'arroser régulièrement la nuque, d'ouvrir le maillot dans les ascensions et de baisser son rythme cardiaque. 
-        - Vent & Froid : Résume la situation du vent. Si la température ressentie est plus basse que la température réelle à cause du vent, alerte-le pour qu'il s'habille en conséquence !
-        - Tenue & Matos : Conseille la tenue idéale. Rappelle le kit de réparation. Si la température maximale dépasse les 18°C et qu'il roule de jour, rappelle-lui la crème solaire. Si son départ/arrivée frôle la nuit, rappelle les lampes.
+LOGISTIQUE
+Points d'eau : {eau_txt}
+Eau calculée : {eau_total} L ({eau_conseil})
+Glucides     : {carbs_total} g ({carbs_h}g/h) → {nb_barres} barres (40g) ou {nb_gels} gels (25g)
 
-        **3. Gestion de l'Effort (Le Pacing) ⚡**
-        Analyse le parcours chronologiquement. Dis-lui EXACTEMENT à quel moment il doit "gérer" (ex: vent de face, approche d'un grand col) et à quel moment il peut "forcer" (ex: vent de dos, replat). Cite les ascensions pour rythmer l'effort.
+═══════════════════════════════════════════════
+BRIEFING — RESPECTE EXACTEMENT CETTE STRUCTURE
+═══════════════════════════════════════════════
 
-        **4. Le Ravito (Dans les poches !) 🍌💧**
-        Calcule ce qu'il doit emporter pour {duree_h} heures :
-        - Eau : 0.5 à 0.6 L par heure. ATTENTION : si la température maximale dépasse les 25°C, dis-lui de passer à 1 gourde pleine par heure et de rajouter des électrolytes (ou une pincée de sel) !
-        - Solide : Compte 1 barre d'amande de 25g ET 1 gourde de compote "Pom'Pote" par heure, PUIS ajoute une marge de sécurité vitale de 2 barres et 1 compote au total. 
-        Donne-lui les totaux précis à préparer.
+## 📋 Résumé
+3 phrases max. Distance, D+, durée, départ/arrivée, niveau de difficulté.
+Si les noms de cols évoquent un massif ou une région identifiable, cite-le.
 
-        **5. Le mot de la fin 💡**
-        Termine par un petit mot d'encouragement sympa pour le chauffer à bloc !
-        """
-        
+---
+
+## 🌤️ Météo & Équipement
+
+**Conditions du jour**
+Synthèse temp + vent en 2 phrases.
+
+**Tenue**
+Sois très précis : liste chaque pièce vestimentaire adaptée à t_min={t_min}°C au départ.
+Mentionne si les descentes nécessitent un coupe-vent (haute altitude ou vent fort).
+
+**Alertes**
+- Pluie : {pluie_txt}. Conduite à tenir si ça arrive.
+- UV {uv_txt} : crème solaire SPF adapté si UV ≥ 3, renouvellement toutes les 2h.
+- Pollen {pollen_txt} : conseils si alerte active.
+- Éclairage : si départ avant {lever_str} ou arrivée après {coucher_str}.
+- Wind chill : {ressenti_txt} — alerte si <5°C.
+
+---
+
+## ⚡ Plan de course
+
+Décompose en phases avec les kilomètres et heures estimées.
+Pour chaque phase indique : niveau d'effort, raison (vent/pente/chaleur), conseil tactique.
+Pour chaque ascension : heure d'attaque estimée, stratégie de montée, gestion de la descente.
+Identifie les 2 moments où il peut "appuyer" et les 2 moments où il doit "lever le pied".
+
+---
+
+## 🍌 Ravitaillement
+
+**Eau** : {eau_total} L — {eau_conseil}
+{"⚠️ Électrolytes obligatoires (chaleur)." if t_max is not None and t_max >= 25 else ""}
+{eau_txt}
+Si points d'eau disponibles : stratégie de remplissage aux km précis.
+
+**Énergie** : {carbs_total} g de glucides sur {dh}h{dm:02d}
+Option A : {nb_barres} barres énergétiques (40g gl. chacune)
+Option B : {nb_gels} gels (25g) + 1-2 bananes pour l'apport solide
+Conseil : solide en 1ère moitié, gel/liquide en 2ème moitié.
+Rythme : 1 prise toutes les 30 min dès la 1ère heure.
+
+---
+
+## ✅ Les 3 priorités de cette sortie
+
+Exactement 3 points. Chacun doit être directement lié aux données ci-dessus.
+Format : **[Thème]** — action concrète et chiffrée.
+"""
+
         response = model.generate_content(prompt)
         return response.text
 
     except Exception as e:
-        logger.error(f"Erreur lors de la génération Gemini : {e}")
+        logger.error(f"Erreur Gemini : {e}")
         raise e
