@@ -97,11 +97,11 @@ def recuperer_fuseau(lat: float, lon: float) -> str:
         return "UTC"
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def recuperer_meteo_batch(checkpoints_frozen: tuple, is_past: bool = False, date_str: str = None) -> list | None:
     """
     Récupère la météo pour tous les checkpoints en un seul appel API.
-    Mise en cache 30 minutes.
+    Mise en cache 1 heure. Retry avec backoff exponentiel sur 429.
 
     Args:
         checkpoints_frozen: tuple de (lat, lon, heure_api) — hashable pour le cache.
@@ -111,6 +111,8 @@ def recuperer_meteo_batch(checkpoints_frozen: tuple, is_past: bool = False, date
     Returns:
         Liste de dicts météo par checkpoint, ou None en cas d'erreur.
     """
+    import time as _time
+
     if not checkpoints_frozen:
         return []
     lats = ",".join(str(c[0]) for c in checkpoints_frozen)
@@ -131,14 +133,31 @@ def recuperer_meteo_batch(checkpoints_frozen: tuple, is_past: bool = False, date
             "&hourly=temperature_2m,precipitation_probability,weathercode,"
             "wind_speed_10m,wind_direction_10m,wind_gusts_10m&timezone=auto"
         )
-    try:
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        d = r.json()
-        return d if isinstance(d, list) else [d]
-    except Exception as e:
-        logger.error(f"Erreur météo batch : {e}")
-        return None
+
+    # Retry avec backoff exponentiel : 2s, 5s, 12s
+    delays = [2, 5, 12]
+    for attempt, delay in enumerate(delays + [None]):
+        try:
+            r = requests.get(url, timeout=15)
+            if r.status_code == 429:
+                if delay is not None:
+                    logger.warning(f"Météo 429 — tentative {attempt+1}, attente {delay}s")
+                    _time.sleep(delay)
+                    continue
+                else:
+                    logger.error("Météo 429 — toutes les tentatives épuisées")
+                    return None
+            r.raise_for_status()
+            d = r.json()
+            return d if isinstance(d, list) else [d]
+        except Exception as e:
+            if delay is not None:
+                logger.warning(f"Météo erreur tentative {attempt+1} : {e} — retry dans {delay}s")
+                _time.sleep(delay)
+            else:
+                logger.error(f"Erreur météo batch : {e}")
+                return None
+    return None
 
 
 @st.cache_data(show_spinner=False)
@@ -316,7 +335,7 @@ def recuperer_uv_pollen(lat: float, lon: float, date_str: str) -> dict:
             "https://air-quality-api.open-meteo.com/v1/air-quality",
             params={
                 "latitude":  lat, "longitude": lon,
-                "hourly":    "grass_pollen,birch_pollen,olive_pollen,alder_pollen,mugwort_pollen",
+                "hourly":    "grass_pollen,birch_pollen,olive_pollen,alder_pollen,mugwort_pollen,ragweed_pollen",
                 "start_date": date_str, "end_date": date_str,
                 "timezone":  "auto",
             }, timeout=10)
@@ -329,6 +348,7 @@ def recuperer_uv_pollen(lat: float, lon: float, date_str: str) -> dict:
             ("olive_pollen",    "🫒 Olivier"),
             ("alder_pollen",    "🌲 Aulne"),
             ("mugwort_pollen",  "🌿 Armoise"),
+            ("ragweed_pollen",  "🌻 Ambroisie"),
         ]
         for clé, nom in ESPECES:
             vals = [v for v in hourly.get(clé, []) if v is not None]
