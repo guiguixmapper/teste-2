@@ -34,7 +34,7 @@ CSS = """
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
   }
 
-  #MainMenu, footer, header { visibility: hidden; }
+  footer { visibility: hidden; }  /* MainMenu conservé pour accès aux options thème */
   .block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
 
   /* ── Sidebar ── */
