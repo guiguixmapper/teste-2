@@ -1107,9 +1107,21 @@ def main():
     # ── MÉTÉO (AVEC MÉMOIRE LOCALE) ───────────────────────────────────────────
     with etapes.container():
         with st.spinner("📡 Récupération météo..."):
-            frozen   = tuple((cp["lat"], cp["lon"], cp["Heure_API"]) for cp in checkpoints)
+            # Limiter à 50 checkpoints max pour éviter les 429 Open-Meteo
+            cps_meteo = checkpoints[::max(1, len(checkpoints)//50)] if len(checkpoints) > 50 else checkpoints
+            frozen   = tuple((cp["lat"], cp["lon"], cp["Heure_API"]) for cp in cps_meteo)
             is_past  = date_dep < date.today()
             rep_list = memoire_meteo(frozen, is_past=is_past, date_str=date_dep.strftime("%Y-%m-%d"))
+            # Reconstruire la liste complète par interpolation
+            if rep_list and len(cps_meteo) < len(checkpoints):
+                idx_map = {id(cps_meteo[i]): i for i in range(len(cps_meteo))}
+                rep_full = []
+                j = 0
+                for cp in checkpoints:
+                    if id(cp) in idx_map:
+                        j = idx_map[id(cp)]
+                    rep_full.append(rep_list[j] if j < len(rep_list) else {})
+                rep_list = rep_full
                 
     etapes.empty()
 
