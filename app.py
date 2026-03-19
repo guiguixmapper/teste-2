@@ -35,7 +35,7 @@ CSS = """
   }
 
   footer { visibility: hidden; }  /* MainMenu conservé pour accès aux options thème */
-  .block-container { padding-top: 2.5rem !important; padding-bottom: 2rem !important; }
+  .block-container { padding-top: 4rem !important; padding-bottom: 2rem !important; }
 
   /* ── Palette Teal ── */
   :root {
