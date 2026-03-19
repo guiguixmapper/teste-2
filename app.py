@@ -509,31 +509,32 @@ def creer_figure_profil(df, ascensions, vitesse, ref_val, mode, poids, idx_survo
     fig   = go.Figure()
     dists = df["Distance (km)"].tolist()
     alts  = df["Altitude (m)"].tolist()
-    zones = zones_actives(mode)
+    # Trace de base : fond neutre discret
     fig.add_trace(go.Scatter(
-        x=dists, y=alts, fill="tozeroy", fillcolor="rgba(59,130,246,0.12)",
-        line=dict(color="#3b82f6", width=2),
+        x=dists, y=alts, fill="tozeroy", fillcolor="rgba(148,163,184,0.10)",
+        line=dict(color="rgba(148,163,184,0.5)", width=1.5),
         hovertemplate="<b>Km %{x:.1f}</b><br>Altitude : %{y:.0f} m<extra></extra>",
-        name="Profil"))
+        name="Profil", showlegend=False))
     for i, asc in enumerate(ascensions):
         d0, d1 = asc["_debut_km"], asc["_sommet_km"]
         cat    = asc["Catégorie"]
         nom    = asc.get("Nom", "—")
+        # Couleur = catégorie UCI (pas zone d'entraînement)
         coul   = COULEURS_CAT.get(cat, "#94a3b8")
-        op     = 1.0 if idx_survol is None or idx_survol == i else 0.2
+        op     = 1.0 if idx_survol is None or idx_survol == i else 0.15
         sx     = [d for d in dists if d0 <= d <= d1]
         sy     = [alts[j] for j, d in enumerate(dists) if d0 <= d <= d1]
         if not sx: continue
         w = estimer_watts(asc["_pente_moy"], vitesse, poids)
-        _, zlbl, zcoul = get_zone(w, ref_val, zones)
-        r, g, b = int(zcoul[1:3],16), int(zcoul[3:5],16), int(zcoul[5:7],16)
         hover_extra = (f"FC est. : {estimer_fc(w, ref_val, ref_val)}bpm"
                        if mode == "🫀 Fréquence Cardiaque"
                        else f"Puissance est. : {w} W ({round(w/ref_val*100) if ref_val>0 else '?'}% FTP)")
+        # Hex → rgb pour fillcolor avec opacité
+        r, g, b = int(coul[1:3],16), int(coul[3:5],16), int(coul[5:7],16)
         fig.add_trace(go.Scatter(
             x=sx, y=sy, fill="tozeroy",
-            fillcolor=f"rgba({r},{g},{b},{round(op*0.35,2)})",
-            line=dict(color=coul, width=3 if idx_survol==i else 2), opacity=op,
+            fillcolor=f"rgba({r},{g},{b},{round(op*0.30,2)})",
+            line=dict(color=coul, width=3 if idx_survol==i else 2.5), opacity=op,
             hovertemplate=(f"<b>{cat}{' — '+nom if nom!='—' else ''}</b>"
                            f"<br>Km %{{x:.1f}}<br>Alt : %{{y:.0f}} m<br>{hover_extra}<extra></extra>"),
             name=nom if nom != "—" else cat, showlegend=True, legendgroup=cat))
@@ -542,16 +543,15 @@ def creer_figure_profil(df, ascensions, vitesse, ref_val, mode, poids, idx_survo
             text=f"▲ {nom if nom != '—' else cat.split()[0]}",
             showarrow=True, arrowhead=2, arrowsize=.8,
             arrowcolor=coul, font=dict(size=10, color=coul),
-            bgcolor="white", bordercolor=coul, borderwidth=1, opacity=op)
+            bgcolor="rgba(255,255,255,0.85)", bordercolor=coul, borderwidth=1, opacity=op)
     fig.update_layout(
-        height=500, margin=dict(l=50,r=20,t=30,b=40),
+        height=480, margin=dict(l=50,r=20,t=20,b=10),
         xaxis=dict(title="Distance (km)", showgrid=True, gridcolor="#e2e8f0",
                    title_font=dict(color="#1e293b"), tickfont=dict(color="#1e293b")),
         yaxis=dict(title="Altitude (m)", showgrid=True, gridcolor="#e2e8f0",
                    title_font=dict(color="#1e293b"), tickfont=dict(color="#1e293b")),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                    font=dict(color="#1e293b"), bgcolor="rgba(255,255,255,0.9)",
-                    bordercolor="#e2e8f0", borderwidth=1),
+        # Légende déplacée en bas via showlegend=False ici, on la gère en HTML dessous
+        showlegend=False,
         hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
         font=dict(color="#1e293b"))
     return fig
@@ -823,14 +823,6 @@ def creer_carte(points_gpx, resultats, ascensions, tiles="CartoDB positron", att
 def main():
     st.set_page_config(page_title="Vélo & Météo", page_icon="🚴‍♂️", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
-    st.markdown("""
-    <div class="app-header">
-      <div class="app-header-icon">🚴</div>
-      <div>
-        <h1>Vélo &amp; Météo</h1>
-        <p>Analysez votre tracé GPX — météo, cols UCI, profil interactif, zones d'entraînement.</p>
-      </div>
-    </div>""", unsafe_allow_html=True)
 
     # ── SIDEBAR ───────────────────────────────────────────────────────────────
     # ── Sidebar header ──
@@ -1282,16 +1274,19 @@ def main():
             st.plotly_chart(
                 creer_figure_profil(df_profil, ascensions, vitesse, ref_val, mode, poids, idx_survol),
                 width='stretch')
-        # Légende zones compacte sous le graphique (une seule ligne discrète)
-        legende_zones = " · ".join(
-            f'<span style="display:inline-flex;align-items:center;gap:3px">'
-            f'<span style="width:8px;height:8px;border-radius:50%;background:{coul};display:inline-block"></span>'
-            f'<span style="font-size:0.7rem;opacity:0.7">{lbl}</span></span>'
-            for _, _, _, lbl, coul in zones_actives(mode)
-        )
-        st.markdown(
-            f'<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px">{legende_zones}</div>',
-            unsafe_allow_html=True)
+        # Légende catégories UCI sous le graphique
+        cats_presentes = list({asc["Catégorie"]: COULEURS_CAT.get(asc["Catégorie"], "#94a3b8")
+                               for asc in ascensions}.items()) if ascensions else []
+        if cats_presentes:
+            legende_cats = " &nbsp;·&nbsp; ".join(
+                f'<span style="display:inline-flex;align-items:center;gap:4px">'
+                f'<span style="width:10px;height:10px;border-radius:2px;background:{coul};display:inline-block"></span>'
+                f'<span style="font-size:0.72rem;font-weight:500">{cat}</span></span>'
+                for cat, coul in cats_presentes
+            )
+            st.markdown(
+                f'<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:8px;opacity:0.8">{legende_cats}</div>',
+                unsafe_allow_html=True)
 
     with tab_meteo:
         if err_meteo:
@@ -1454,7 +1449,7 @@ def main():
                 "Direction": cp.get("Dir","—"),
                 "Effet vent": cp.get("effet","—"),
             })
-        st.dataframe(pd.DataFrame(lignes), width='stretch', hide_index=True, height=600,
+        st.dataframe(pd.DataFrame(lignes), width='stretch', hide_index=True, height=min(800, 56 + 35 * len(lignes)),
             column_config={
                 "Heure":       st.column_config.TextColumn("🕐 Heure"),
                 "Km":          st.column_config.NumberColumn("📏 Km"),
